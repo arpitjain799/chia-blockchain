@@ -3,15 +3,25 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import pytest
+from blspy import G2Element
 
 from chia.rpc.wallet_rpc_client import WalletRpcClient
 from chia.simulator.full_node_simulator import FullNodeSimulator
 from chia.simulator.time_out_assert import time_out_assert_not_none
+from chia.types.blockchain_format.coin import coin_as_list
+from chia.types.blockchain_format.program import Program
 from chia.types.blockchain_format.sized_bytes import bytes32
+from chia.types.coin_spend import CoinSpend
 from chia.types.peer_info import PeerInfo
+from chia.types.spend_bundle import SpendBundle
+from chia.util.bech32m import encode_puzzle_hash
 from chia.util.ints import uint16, uint64
+from chia.wallet.cat_wallet.cat_utils import construct_cat_puzzle
 from chia.wallet.did_wallet.did_wallet import DIDWallet
+from chia.wallet.puzzles.cat_loader import CAT_MOD
 from chia.wallet.util.wallet_types import WalletType
+from chia.wallet.vc_wallet.cr_cat_drivers import ProofsChecker, construct_cr_layer
+from chia.wallet.vc_wallet.cr_cat_wallet import CRCATWallet
 from chia.wallet.vc_wallet.vc_store import VCProofs, VCRecord
 
 
@@ -30,6 +40,7 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     wallet_node_0 = wallet_service_0._node
     wallet_node_1 = wallet_service_1._node
     wallet_0 = wallet_node_0.wallet_state_manager.main_wallet
+    wallet_1 = wallet_node_0.wallet_state_manager.main_wallet
 
     client_0 = await WalletRpcClient.create(
         bt.config["self_hostname"],
@@ -72,7 +83,6 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     new_vc_record: Optional[VCRecord] = await client_0.vc_get_vc(vc_record.vc.launcher_id)
     assert new_vc_record is not None
 
-    assert did_wallet.did_info.current_inner is not None
     # Spend VC
     proofs: VCProofs = VCProofs({"foo": "bar", "baz": "qux", "corge": "grault"})
     proof_root: bytes32 = proofs.root()
@@ -94,6 +104,84 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     vc_records, fetched_proofs = await client_0.vc_get_vc_list()
     assert len(vc_records) == 1
     assert fetched_proofs[proof_root.hex()] == proofs.key_value_pairs
+
+    # Mint CR-CAT
+    our_puzzle: Program = await wallet_0.get_new_puzzle()
+    proofs_checker: ProofsChecker = ProofsChecker(["foo", "bar"])
+    cat_puzzle: Program = construct_cat_puzzle(
+        CAT_MOD,
+        Program.to(None).get_tree_hash(),
+        Program.to(None),
+    )
+    addr = encode_puzzle_hash(cat_puzzle.get_tree_hash(), "txch")
+    CAT_AMOUNT_0 = uint64(100)
+
+    tx = await client_0.send_transaction(1, CAT_AMOUNT_0, addr)
+    spend_bundle = tx.spend_bundle
+    assert spend_bundle is not None
+
+    await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
+    await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+
+    # Do the eve spend back to our wallet and add the CR layer
+    cat_coin = next(c for c in spend_bundle.additions() if c.amount == CAT_AMOUNT_0)
+    eve_spend = SpendBundle(
+        [
+            CoinSpend(
+                cat_coin,
+                cat_puzzle,
+                Program.to(
+                    [
+                        Program.to(
+                            [
+                                [
+                                    51,
+                                    construct_cr_layer(
+                                        [did_id],
+                                        proofs_checker,
+                                        our_puzzle,
+                                    ).get_tree_hash(),
+                                    CAT_AMOUNT_0,
+                                ],
+                                [51, None, -113, None, None],
+                            ]
+                        ),
+                        None,
+                        cat_coin.name(),
+                        coin_as_list(cat_coin),
+                        [cat_coin.parent_coin_info, Program.to(1).get_tree_hash(), cat_coin.amount],
+                        0,
+                        0,
+                    ]
+                ),
+            )
+        ],
+        G2Element(),
+    )
+    await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, eve_spend.name())
+    await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+
+    # Send CR-CAT to another wallet
+    cr_cat_wallet_id: uint16 = (
+        await wallet_node_0.wallet_state_manager.get_all_wallet_info_entries(wallet_type=WalletType.CRCAT)
+    )[0].id
+    cr_cat_wallet: CRCATWallet = wallet_node_0.wallet_state_manager.wallets[cr_cat_wallet_id]
+    # TODO: Do this with the CAT RPC
+    txs = await cr_cat_wallet.generate_signed_transaction(
+        [uint64(100)],
+        [await wallet_1.get_new_puzzle_hash()],
+        uint64(2000000000),
+        memos=[[b"hey"]],
+        verified_credential=vc_record.vc,
+    )
+    for tx in txs:
+        await wallet_node_0.wallet_state_manager.add_pending_transaction(tx)
+    spend_bundle = next(tx.spend_bundle for tx in txs if tx.spend_bundle is not None)
+    await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
+    await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+
+    # Check the other wallet recieved it
+    assert len(await wallet_node_0.wallet_state_manager.get_all_wallet_info_entries(wallet_type=WalletType.CRCAT)) == 1
 
     # Revoke VC
     txs = await client_0.vc_revoke_vc(vc_record_updated.vc.coin.parent_coin_info, uint64(1))

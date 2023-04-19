@@ -219,7 +219,6 @@ class CRCATWallet(CATWallet):
         exclude_coins: Optional[Set[Coin]] = None,
         reuse_puzhash: Optional[bool] = None,
         verified_credential: Optional[VerifiedCredential] = None,
-        proof_file: Optional[Any] = None,  # type to be determined
     ) -> Tuple[SpendBundle, Optional[TransactionRecord]]:
         if coin_announcements_to_consume is not None:
             coin_announcements_bytes: Optional[Set[bytes32]] = {a.name() for a in coin_announcements_to_consume}
@@ -397,7 +396,6 @@ class CRCATWallet(CATWallet):
         cat_discrepancy: Optional[Tuple[int, Program, Program]] = None,  # (extra_delta, tail_reveal, tail_solution)
         reuse_puzhash: Optional[bool] = None,
         verified_credential: Optional[VerifiedCredential] = None,
-        proof_file: Optional[Any] = None,  # type to be determined
     ) -> List[TransactionRecord]:
         if memos is None:
             memos = [[] for _ in range(len(puzzle_hashes))]
@@ -429,7 +427,6 @@ class CRCATWallet(CATWallet):
             exclude_coins=exclude_cat_coins,
             reuse_puzhash=reuse_puzhash,
             verified_credential=verified_credential,
-            proof_file=proof_file,
         )
 
         # TODO: sign the thing
