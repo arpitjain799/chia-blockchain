@@ -757,12 +757,16 @@ class WalletStateManager:
                 crcat: CRCAT = CRCAT.get_next_from_coin_spend(coin_spend)[0]
                 # Check if we already have a wallet
                 for wallet_info in await self.get_all_wallet_info_entries(wallet_type=WalletType.CRCAT):
-                    crcat_info: CRCATInfo = CRCATInfo.from_json_dict(json.loads(wallet_info.data))
+                    crcat_info: CRCATInfo = CRCATInfo.from_bytes(bytes.fromhex(wallet_info.data))
                     if crcat_info.limitations_program_hash == crcat.tail_hash:
                         return WalletIdentifier(wallet_info.id, WalletType(wallet_info.type))
                 # Cannot find a wallet, create a new one
                 crcat_wallet = await CRCATWallet.get_or_create_wallet_for_cat(
-                    self, self.main_wallet, crcat.tail_hash.hex(), crcat.authorized_providers, crcat.proofs_checker
+                    self,
+                    self.main_wallet,
+                    crcat.tail_hash.hex(),
+                    authorized_providers=crcat.authorized_providers,
+                    proofs_checker=crcat.proofs_checker,
                 )
                 return WalletIdentifier.create(crcat_wallet)
             if bytes(tail_hash).hex()[2:] in self.default_cats or self.config.get(

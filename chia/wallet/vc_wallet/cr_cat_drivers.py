@@ -12,6 +12,7 @@ from chia.types.blockchain_format.sized_bytes import bytes32
 from chia.types.coin_spend import CoinSpend
 from chia.util.hash import std_hash
 from chia.util.ints import uint64
+from chia.util.streamable import Streamable, streamable
 from chia.wallet.cat_wallet.cat_utils import construct_cat_puzzle
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.payment import Payment
@@ -575,8 +576,9 @@ class CRCATSpend:
         )
 
 
+@streamable
 @dataclass(frozen=True)
-class ProofsChecker:
+class ProofsChecker(Streamable):
     flags: List[str]
 
     def as_program(self) -> Program:
@@ -592,3 +594,10 @@ class ProofsChecker:
                 )
             ]
         )
+
+    @classmethod
+    def from_program(cls, uncurried_puzzle: UncurriedPuzzle) -> ProofsChecker:
+        if uncurried_puzzle.mod != PROOF_FLAGS_CHECKER:
+            raise ValueError("Puzzle was not a proof checker")
+
+        return cls([flag.at("f").atom.decode("utf8") for flag in uncurried_puzzle.args.at("f").as_iter()])

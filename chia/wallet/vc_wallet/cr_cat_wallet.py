@@ -6,7 +6,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
-from blspy import AugSchemeMPL, G1Element, G2Element
+from blspy import G1Element, G2Element
 
 from chia.server.ws_connection import WSChiaConnection
 from chia.types.announcement import Announcement
@@ -19,10 +19,7 @@ from chia.util.byte_types import hexstr_to_bytes
 from chia.util.hash import std_hash
 from chia.util.ints import uint32, uint64
 from chia.wallet.cat_wallet.cat_info import CRCATInfo
-from chia.wallet.cat_wallet.cat_utils import (
-    SpendableCAT,
-    unsigned_spend_bundle_for_spendable_cats,
-)
+from chia.wallet.cat_wallet.cat_utils import SpendableCAT, unsigned_spend_bundle_for_spendable_cats
 from chia.wallet.cat_wallet.cat_wallet import CATWallet
 from chia.wallet.cat_wallet.lineage_store import CATLineageStore
 from chia.wallet.lineage_proof import LineageProof
@@ -30,8 +27,8 @@ from chia.wallet.outer_puzzles import AssetType
 from chia.wallet.payment import Payment
 from chia.wallet.puzzle_drivers import PuzzleInfo
 from chia.wallet.puzzles.cat_loader import CAT_MOD
-
 from chia.wallet.transaction_record import TransactionRecord
+from chia.wallet.util.compute_memos import compute_memos
 from chia.wallet.util.transaction_type import TransactionType
 from chia.wallet.util.wallet_types import AmountWithPuzzlehash, WalletType
 from chia.wallet.vc_wallet.cr_cat_drivers import CRCAT, ProofsChecker
@@ -47,7 +44,7 @@ class CRCATWallet(CATWallet):
     wallet_state_manager: WalletStateManager
     log: logging.Logger
     wallet_info: WalletInfo
-    cat_info: CRCATInfo
+    info: CRCATInfo
     standard_wallet: Wallet
     cost_of_single_tx: int
     lineage_store: CATLineageStore
@@ -71,10 +68,12 @@ class CRCATWallet(CATWallet):
         wallet_state_manager: WalletStateManager,
         wallet: Wallet,
         limitations_program_hash_hex: str,
-        authorized_providers: List[bytes32],
-        proofs_checker: Program,
         name: Optional[str] = None,
+        authorized_providers: Optional[List[bytes32]] = None,
+        proofs_checker: Optional[ProofsChecker] = None,
     ) -> CRCATWallet:
+        if authorized_providers is None or proofs_checker is None:
+            raise ValueError("get_or_create_wallet_for_cat was call on CRCATWallet without proper arguments")
         self = CRCATWallet()
         self.cost_of_single_tx = 78000000  # Measured in testing
         self.standard_wallet = wallet
@@ -83,7 +82,6 @@ class CRCATWallet(CATWallet):
         self.log = logging.getLogger(name)
 
         tail_hash = bytes32.from_hexstr(limitations_program_hash_hex)
-        limitations_program_hash_hex = tail_hash.hex()
 
         for id, w in wallet_state_manager.wallets.items():
             if w.type() == CRCATWallet.type():
@@ -94,8 +92,8 @@ class CRCATWallet(CATWallet):
 
         self.wallet_state_manager = wallet_state_manager
 
-        self.cat_info = CRCATInfo(tail_hash, None, authorized_providers, proofs_checker)
-        info_as_string = bytes(self.cat_info).hex()
+        self.info = CRCATInfo(tail_hash, None, authorized_providers, proofs_checker)
+        info_as_string = bytes(self.info).hex()
         self.wallet_info = await wallet_state_manager.user_store.create_wallet(name, WalletType.CRCAT, info_as_string)
         self.lineage_store = await CATLineageStore.create(self.wallet_state_manager.db_wrapper, self.get_asset_id())
 
@@ -110,14 +108,16 @@ class CRCATWallet(CATWallet):
         puzzle_driver: PuzzleInfo,
         name: Optional[str] = None,
     ) -> CRCATWallet:
-        cr_layer: PuzzleInfo = puzzle_driver.also()
+        cr_layer: Optional[PuzzleInfo] = puzzle_driver.also()
+        if cr_layer is None:
+            raise ValueError("create_from_puzzle_info called on CRCATWallet with a non CR-CAT puzzle driver")
         return await cls.get_or_create_wallet_for_cat(
             wallet_state_manager,
             wallet,
             puzzle_driver["tail"].hex(),
+            name,
             [bytes32(provider) for provider in cr_layer["authorized_providers"]],
             ProofsChecker.from_program(cr_layer["proofs_checker"]),
-            name,
         )
 
     @staticmethod
@@ -133,7 +133,7 @@ class CRCATWallet(CATWallet):
         self.wallet_state_manager = wallet_state_manager
         self.wallet_info = wallet_info
         self.standard_wallet = wallet
-        self.cat_info = CRCATInfo.from_bytes(hexstr_to_bytes(self.wallet_info.data))
+        self.info = CRCATInfo.from_bytes(hexstr_to_bytes(self.wallet_info.data))
         self.lineage_store = await CATLineageStore.create(self.wallet_state_manager.db_wrapper, self.get_asset_id())
         return self
 
@@ -145,7 +145,7 @@ class CRCATWallet(CATWallet):
         return self.wallet_info.id
 
     def get_asset_id(self) -> str:
-        return self.cat_info.limitations_program_hash.hex()
+        return self.info.limitations_program_hash.hex()
 
     async def set_tail_program(self, tail_program: str) -> None:
         raise NotImplementedError("set_tail_program is a legacy method and is not available on CR-CAT wallets")
@@ -355,7 +355,7 @@ class CRCATWallet(CATWallet):
             assert lineage_proof is not None
             new_spendable_cat = SpendableCAT(
                 coin,
-                self.cat_info.limitations_program_hash,
+                self.info.limitations_program_hash,
                 inner_puzzle,
                 innersol,
                 limitations_solution=tail_solution,
@@ -416,7 +416,7 @@ class CRCATWallet(CATWallet):
             max_send = await self.get_max_send_amount()
             if payment_sum > max_send:
                 raise ValueError(f"Can't send more than {max_send} mojos in a single transaction")
-        signing_hints, unsigned_spend_bundle, chia_tx = await self.generate_unsigned_spendbundle(
+        unsigned_spend_bundle, chia_tx = await self.generate_unsigned_spendbundle(
             payments,
             fee,
             cat_discrepancy=cat_discrepancy,  # (extra_delta, tail_reveal, tail_solution)
@@ -443,15 +443,15 @@ class CRCATWallet(CATWallet):
                 fee_amount=fee,
                 confirmed=False,
                 sent=uint32(0),
-                spend_bundle=spend_bundle if i == 0 else None,
-                additions=spend_bundle.additions() if i == 0 else None,
-                removals=spend_bundle.removals() if i == 0 else None,
+                spend_bundle=unsigned_spend_bundle if i == 0 else None,
+                additions=unsigned_spend_bundle.additions() if i == 0 else [],
+                removals=unsigned_spend_bundle.removals() if i == 0 else [],
                 wallet_id=self.id(),
                 sent_to=[],
                 trade_id=None,
                 type=uint32(TransactionType.OUTGOING_TX.value),
-                name=spend_bundle.name(),
-                memos=payment.memos,
+                name=unsigned_spend_bundle.name(),
+                memos=list(compute_memos(unsigned_spend_bundle).items()),
             )
             for i, payment in enumerate(payments)
         ]
@@ -462,23 +462,30 @@ class CRCATWallet(CATWallet):
         return tx_list
 
     async def match_puzzle_info(self, puzzle_driver: PuzzleInfo) -> bool:
-        if AssetType(puzzle_driver.type()) == AssetType.CAT and puzzle_driver["tail"] == self.cat_info.tail_hash:
-            inner_puzzle_driver: PuzzleInfo = puzzle_driver.also()
+        if (
+            AssetType(puzzle_driver.type()) == AssetType.CAT
+            and puzzle_driver["tail"] == self.info.limitations_program_hash
+        ):
+            inner_puzzle_driver: Optional[PuzzleInfo] = puzzle_driver.also()
+            if inner_puzzle_driver is None:
+                raise ValueError("Malformed puzzle driver passed to CRCATWallet.match_puzzle_info")
             return (
                 AssetType(inner_puzzle_driver.type()) == AssetType.CR
-                and [bytes32(provider) for provider in cr_layer["authorized_providers"]]
-                and ProofsChecker.from_program(cr_layer["proofs_checker"]) == self.proofs_checker
+                and [bytes32(provider) for provider in inner_puzzle_driver["authorized_providers"]]
+                == self.info.authorized_providers
+                and ProofsChecker.from_program(inner_puzzle_driver["proofs_checker"]) == self.info.proofs_checker
             )
+        return False
 
     async def get_puzzle_info(self, asset_id: bytes32) -> PuzzleInfo:
         return PuzzleInfo(
             {
                 "type": AssetType.CAT.value,
-                "tail": "0x" + self.tail_hash,
+                "tail": "0x" + self.info.limitations_program_hash.hex(),
                 "also": {
                     "type": AssetType.CR.value,
-                    "authorized_providers": ["0x" + provider.hex() for provider in self.authorized_providers],
-                    "proofs_checker": self.proofs_checker.as_program(),
+                    "authorized_providers": ["0x" + provider.hex() for provider in self.info.authorized_providers],
+                    "proofs_checker": self.info.proofs_checker.as_program(),
                 },
             }
         )
