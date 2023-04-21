@@ -6,9 +6,9 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 from blspy import G1Element, G2Element
-from chia_rs.chia_rs import CoinState
 from clvm.casts import int_to_bytes
 
+from chia.protocols.wallet_protocol import CoinState
 from chia.server.ws_connection import WSChiaConnection
 from chia.types.announcement import Announcement
 from chia.types.blockchain_format.coin import Coin, coin_as_list
@@ -27,6 +27,7 @@ from chia.wallet.transaction_record import TransactionRecord
 from chia.wallet.uncurried_puzzle import uncurry_puzzle
 from chia.wallet.util.compute_memos import compute_memos
 from chia.wallet.util.transaction_type import TransactionType
+from chia.wallet.util.wallet_sync_utils import fetch_coin_spend_for_coin_state
 from chia.wallet.util.wallet_types import AmountWithPuzzlehash, WalletType
 from chia.wallet.vc_wallet.cr_cat_drivers import CRCAT, PENDING_VC_ANNOUNCEMENT, CRCATSpend
 from chia.wallet.vc_wallet.vc_drivers import VerifiedCredential
@@ -97,8 +98,8 @@ class VCWallet:
         if coin_states is None:
             self.log.error(f"Cannot find parent coin of the verified credential coin: {coin.name().hex()}")
             return
-        parent_coin = coin_states[0].coin
-        cs = await wallet_node.fetch_puzzle_solution(height, parent_coin, peer)
+        parent_coin_state = coin_states[0]
+        cs = await fetch_coin_spend_for_coin_state(parent_coin_state, peer)
         if cs is None:
             self.log.error(f"Cannot get verified credential coin: {coin.name().hex()} puzzle and solution")
             return
@@ -326,13 +327,13 @@ class VCWallet:
     async def revoke_vc(
         self, parent_id: bytes32, peer: WSChiaConnection, fee: uint64 = uint64(0), reuse_puzhash: Optional[bool] = None
     ) -> List[TransactionRecord]:
-        vc_coin_states: CoinState = await self.wallet_state_manager.wallet_node.get_coin_state([parent_id], peer=peer)
+        vc_coin_states: List[CoinState] = await self.wallet_state_manager.wallet_node.get_coin_state(
+            [parent_id], peer=peer
+        )
         if vc_coin_states is None:
             raise ValueError(f"Cannot find verified credential coin: {parent_id.hex()}")
         vc_coin_state = vc_coin_states[0]
-        cs: CoinSpend = await self.wallet_state_manager.wallet_node.fetch_puzzle_solution(
-            vc_coin_state.spent_height, vc_coin_state.coin, peer
-        )
+        cs: CoinSpend = await fetch_coin_spend_for_coin_state(vc_coin_state, peer)
         vc: VerifiedCredential = VerifiedCredential.get_next_from_coin_spend(cs)
 
         # Check if we own the DID
