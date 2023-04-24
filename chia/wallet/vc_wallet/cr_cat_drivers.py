@@ -356,6 +356,10 @@ class CRCAT:
             uint64(parent_spend.coin.amount),
         )
 
+        all_conditions: List[Program] = list(conditions.as_iter())
+        if len(all_conditions) > 1000:
+            raise RuntimeError("More than 1000 conditions not currently supported by CRCAT drivers")
+
         # Almost complete except the coin's full puzzle hash which we want to use the class method to calculate
         partially_completed_crcats: List[CRCAT] = [
             CRCAT(
@@ -366,7 +370,7 @@ class CRCAT:
                 proofs_checker,
                 bytes32(condition.at("rf").atom) if new_inner_puzzle_hash is None else new_inner_puzzle_hash,
             )
-            for condition in conditions.as_iter()
+            for condition in all_conditions
             if condition.at("f").as_int() == 51 and condition.at("rrf") != Program.to(-113)
         ]
 
