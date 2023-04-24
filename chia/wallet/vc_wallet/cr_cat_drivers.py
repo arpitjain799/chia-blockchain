@@ -6,6 +6,7 @@ from typing import Iterable, List, Optional, Tuple, Type, TypeVar
 
 from clvm.casts import int_to_bytes
 
+from chia.types.announcement import Announcement
 from chia.types.blockchain_format.coin import Coin, coin_as_list
 from chia.types.blockchain_format.program import Program
 from chia.types.blockchain_format.sized_bytes import bytes32
@@ -401,7 +402,7 @@ class CRCAT:
         inner_solution: Program,
         # For optimization purposes the conditions may already have been run
         conditions: Optional[Iterable[Program]] = None,
-    ) -> Tuple[List[bytes32], CoinSpend, List["CRCAT"]]:
+    ) -> Tuple[List[Announcement], CoinSpend, List["CRCAT"]]:
         """
         Spend a CR-CAT.
 
@@ -412,7 +413,7 @@ class CRCAT:
         Likely, spend_many is more useful.
         """
         # Gather the output information
-        announcement_ids: List[bytes32] = []
+        announcements: List[Announcement] = []
         new_inner_puzzle_hashes_and_amounts: List[Tuple[bytes32, uint64]] = []
         if conditions is None:
             conditions = inner_puzzle.run(inner_solution).as_iter()
@@ -421,13 +422,13 @@ class CRCAT:
             if condition.at("f").as_int() == 51 and condition.at("rrf").as_int() != -113:
                 new_inner_puzzle_hash: bytes32 = bytes32(condition.at("rf").atom)
                 new_amount: uint64 = uint64(condition.at("rrf").as_int())
-                announcement_ids.append(
-                    std_hash(self.coin.name() + b"\xcd" + std_hash(new_inner_puzzle_hash + int_to_bytes(new_amount)))
+                announcements.append(
+                    Announcement(self.coin.name(), b"\xcd" + std_hash(new_inner_puzzle_hash + int_to_bytes(new_amount)))
                 )
                 new_inner_puzzle_hashes_and_amounts.append((new_inner_puzzle_hash, new_amount))
 
         return (
-            announcement_ids,
+            announcements,
             CoinSpend(
                 self.coin,
                 self.construct_puzzle(inner_puzzle),
@@ -486,7 +487,7 @@ class CRCAT:
         provider_id: bytes32,
         vc_launcher_id: bytes32,
         vc_inner_puzhash: bytes32,
-    ) -> Tuple[List[bytes32], List[CoinSpend], List[CRCAT]]:
+    ) -> Tuple[List[Announcement], List[CoinSpend], List[CRCAT]]:
         """
         Spend a multiple CR-CATs.
 
@@ -506,7 +507,7 @@ class CRCAT:
             key=lambda spend: spend[0].coin.name(),
         )
 
-        all_expected_announcements: List[bytes32] = []
+        all_expected_announcements: List[Announcement] = []
         all_coin_spends: List[CoinSpend] = []
         all_new_crcats: List[CRCAT] = []
 
@@ -589,7 +590,7 @@ class ProofsChecker(Streamable):
 
         return PROOF_FLAGS_CHECKER.curry(
             [
-                Program.to((flag, 1))
+                Program.to((flag, "1"))
                 for flag in sorted(
                     self.flags,
                     key=functools.cmp_to_key(byte_sort_flags),

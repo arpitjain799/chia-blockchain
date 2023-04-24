@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Literal, Optional
 
 import pytest
 from blspy import G2Element
@@ -48,6 +48,8 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
         wallet_service_0.root_path,
         wallet_service_0.config,
     )
+    wallet_node_0.config["automatically_add_unknown_cats"] = True
+    wallet_node_1.config["automatically_add_unknown_cats"] = True
 
     if trusted:
         wallet_node_0.config["trusted_peers"] = {
@@ -63,6 +65,7 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     await wallet_node_0.server.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
     await wallet_node_1.server.start_client(PeerInfo(self_hostname, uint16(full_node_server._port)), None)
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
     did_wallet: DIDWallet = await DIDWallet.create_new_did_wallet(
         wallet_node_0.wallet_state_manager, wallet_0, uint64(1)
     )
@@ -73,18 +76,20 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
 
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
     did_id = bytes32.from_hexstr(did_wallet.get_my_DID())
     vc_record, txs = await client_0.vc_mint_vc(did_id)
     spend_bundle = next(tx.spend_bundle for tx in txs if tx.spend_bundle is not None)
     await time_out_assert_not_none(30, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
     vc_wallet = await wallet_node_0.wallet_state_manager.get_all_wallet_info_entries(wallet_type=WalletType.VC)
     assert len(vc_wallet) == 1
     new_vc_record: Optional[VCRecord] = await client_0.vc_get_vc(vc_record.vc.launcher_id)
     assert new_vc_record is not None
 
     # Spend VC
-    proofs: VCProofs = VCProofs({"foo": "bar", "baz": "qux", "corge": "grault"})
+    proofs: VCProofs = VCProofs({"foo": "1", "bar": "1"})
     proof_root: bytes32 = proofs.root()
     txs = await client_0.vc_spend_vc(
         vc_record.vc.launcher_id,
@@ -94,6 +99,7 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     spend_bundle = next(tx.spend_bundle for tx in txs if tx.spend_bundle is not None)
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
     vc_record_updated: Optional[VCRecord] = await client_0.vc_get_vc(vc_record.vc.launcher_id)
     assert vc_record_updated is not None
     assert vc_record_updated.vc.proof_hash == proof_root
@@ -111,7 +117,7 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     cat_puzzle: Program = construct_cat_puzzle(
         CAT_MOD,
         Program.to(None).get_tree_hash(),
-        Program.to(None),
+        Program.to(1),
     )
     addr = encode_puzzle_hash(cat_puzzle.get_tree_hash(), "txch")
     CAT_AMOUNT_0 = uint64(100)
@@ -122,6 +128,7 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
 
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
 
     # Do the eve spend back to our wallet and add the CR layer
     cat_coin = next(c for c in spend_bundle.additions() if c.amount == CAT_AMOUNT_0)
@@ -138,12 +145,14 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
                                     51,
                                     construct_cr_layer(
                                         [did_id],
-                                        proofs_checker,
+                                        proofs_checker.as_program(),
                                         our_puzzle,
                                     ).get_tree_hash(),
                                     CAT_AMOUNT_0,
+                                    [our_puzzle.get_tree_hash()],
                                 ],
                                 [51, None, -113, None, None],
+                                [1, our_puzzle.get_tree_hash(), [did_id], proofs_checker.as_program()],
                             ]
                         ),
                         None,
@@ -158,10 +167,20 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
         ],
         G2Element(),
     )
+    await client_0.push_tx(eve_spend)  # type: ignore [no-untyped-call]
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, eve_spend.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
 
     # Send CR-CAT to another wallet
+    async def check_length(length: int, func: Callable[..., Awaitable[Any]], *args: Any) -> Optional[Literal[True]]:
+        if len(await func(*args)) == length:
+            return True
+        return None
+
+    await time_out_assert_not_none(
+        15, check_length, 1, wallet_node_0.wallet_state_manager.get_all_wallet_info_entries, WalletType.CRCAT
+    )
     cr_cat_wallet_id: uint16 = (
         await wallet_node_0.wallet_state_manager.get_all_wallet_info_entries(wallet_type=WalletType.CRCAT)
     )[0].id
@@ -169,24 +188,28 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     # TODO: Do this with the CAT RPC
     txs = await cr_cat_wallet.generate_signed_transaction(
         [uint64(100)],
-        [await wallet_1.get_new_puzzle_hash()],
+        [await wallet_1.get_new_puzzlehash()],
         uint64(2000000000),
         memos=[[b"hey"]],
-        verified_credential=vc_record.vc,
     )
     for tx in txs:
         await wallet_node_0.wallet_state_manager.add_pending_transaction(tx)
     spend_bundle = next(tx.spend_bundle for tx in txs if tx.spend_bundle is not None)
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_1, timeout=20)
 
     # Check the other wallet recieved it
     assert len(await wallet_node_0.wallet_state_manager.get_all_wallet_info_entries(wallet_type=WalletType.CRCAT)) == 1
 
     # Revoke VC
+    vc_record_updated = await client_0.vc_get_vc(vc_record_updated.vc.launcher_id)
+    assert vc_record_updated is not None
     txs = await client_0.vc_revoke_vc(vc_record_updated.vc.coin.parent_coin_info, uint64(1))
     spend_bundle = next(tx.spend_bundle for tx in txs if tx.spend_bundle is not None)
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
+    await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)
     vc_record_revoked: Optional[VCRecord] = await client_0.vc_get_vc(vc_record.vc.launcher_id)
     assert vc_record_revoked is None

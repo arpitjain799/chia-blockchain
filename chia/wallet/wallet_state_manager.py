@@ -77,7 +77,8 @@ from chia.wallet.util.wallet_sync_utils import (
     last_change_height_cs,
 )
 from chia.wallet.util.wallet_types import WalletIdentifier, WalletType
-from chia.wallet.vc_wallet.cr_cat_drivers import CRCAT
+from chia.wallet.vc_wallet.cr_cat_drivers import CRCAT, ProofsChecker
+from chia.wallet.vc_wallet.cr_cat_store import CRCATStore
 from chia.wallet.vc_wallet.cr_cat_wallet import CRCATWallet
 from chia.wallet.vc_wallet.vc_drivers import VerifiedCredential
 from chia.wallet.vc_wallet.vc_store import VCStore
@@ -107,6 +108,7 @@ class WalletStateManager:
     user_store: WalletUserStore
     nft_store: WalletNftStore
     vc_store: VCStore
+    cr_cat_store: CRCATStore
     basic_store: KeyValStore
 
     # Makes sure only one asyncio thread is changing the blockchain state at one time
@@ -185,6 +187,7 @@ class WalletStateManager:
         self.user_store = await WalletUserStore.create(self.db_wrapper)
         self.nft_store = await WalletNftStore.create(self.db_wrapper)
         self.vc_store = await VCStore.create(self.db_wrapper)
+        self.cr_cat_store = await CRCATStore.create(self.db_wrapper)
         self.basic_store = await KeyValStore.create(self.db_wrapper)
         self.trade_manager = await TradeManager.create(self, self.db_wrapper)
         self.notification_manager = await NotificationManager.create(self, self.db_wrapper)
@@ -766,7 +769,7 @@ class WalletStateManager:
                     self.main_wallet,
                     crcat.tail_hash.hex(),
                     authorized_providers=crcat.authorized_providers,
-                    proofs_checker=crcat.proofs_checker,
+                    proofs_checker=ProofsChecker.from_program(uncurry_puzzle(crcat.proofs_checker)),
                 )
                 return WalletIdentifier.create(crcat_wallet)
             if bytes(tail_hash).hex()[2:] in self.default_cats or self.config.get(

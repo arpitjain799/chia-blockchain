@@ -31,7 +31,7 @@ from chia.wallet.util.wallet_sync_utils import fetch_coin_spend_for_coin_state
 from chia.wallet.util.wallet_types import AmountWithPuzzlehash, WalletType
 from chia.wallet.vc_wallet.cr_cat_drivers import CRCAT, PENDING_VC_ANNOUNCEMENT, CRCATSpend
 from chia.wallet.vc_wallet.vc_drivers import VerifiedCredential
-from chia.wallet.vc_wallet.vc_store import VCRecord, VCStore
+from chia.wallet.vc_wallet.vc_store import VCProofs, VCRecord, VCStore
 from chia.wallet.wallet import Wallet
 from chia.wallet.wallet_coin_record import WalletCoinRecord
 from chia.wallet.wallet_info import WalletInfo
@@ -512,6 +512,20 @@ class VCWallet:
                 ]
             )
         ), Solver({"vc_authorizations": coin_args})
+
+    async def get_vc_with_provider_in(self, authorized_providers: List[bytes32]) -> VerifiedCredential:
+        vc_records: List[VCRecord] = await self.store.get_vc_records_by_providers(authorized_providers)
+        if len(vc_records) == 0:
+            raise ValueError(f"VCWallet has no VCs with providers in the following list: {authorized_providers}")
+        else:
+            return vc_records[0].vc
+
+    async def proof_of_inclusions_for_root_and_keys(self, root: bytes32, keys: List[str]) -> Program:
+        vc_proofs: Optional[VCProofs] = await self.store.get_proofs_for_root(root)
+        if vc_proofs is None:
+            raise RuntimeError(f"No proofs exist for VC root: {root.hex()}")
+        else:
+            return vc_proofs.prove_keys(keys)
 
     async def select_coins(
         self,

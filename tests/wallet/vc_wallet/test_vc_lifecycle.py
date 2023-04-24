@@ -602,7 +602,7 @@ async def test_vc_lifecycle(test_syncing: bool, cost_logger: CostLogger) -> None
                         [51, ACS_PH, vc.coin.amount],
                         [62, cr_1.expected_announcement()],
                         [62, cr_2.expected_announcement()],
-                        *([61, a] for a in expected_announcements),
+                        *([61, a.name()] for a in expected_announcements),
                         vc.standard_magic_condition(),
                     ]
                 ),

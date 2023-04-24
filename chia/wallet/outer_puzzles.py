@@ -13,7 +13,7 @@ from chia.wallet.nft_wallet.singleton_outer_puzzle import SingletonOuterPuzzle
 from chia.wallet.nft_wallet.transfer_program_puzzle import TransferProgramPuzzle
 from chia.wallet.puzzle_drivers import PuzzleInfo, Solver
 from chia.wallet.uncurried_puzzle import UncurriedPuzzle
-from chia.wallet.vc_wallet.cr_cat_outer_puzzle import CROuterPuzzle
+from chia.wallet.vc_wallet.cr_outer_puzzle import CROuterPuzzle
 
 """
 This file provides a central location for acquiring drivers for outer puzzles like CATs, NFTs, etc.
