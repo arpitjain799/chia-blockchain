@@ -8,7 +8,7 @@ import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from secrets import token_bytes
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, TypeVar
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 import aiosqlite
 from blspy import G1Element, PrivateKey
@@ -763,21 +763,21 @@ class WalletStateManager:
                     crcat_info: CRCATInfo = CRCATInfo.from_bytes(bytes.fromhex(wallet_info.data))
                     if crcat_info.limitations_program_hash == crcat.tail_hash:
                         return WalletIdentifier(wallet_info.id, WalletType(wallet_info.type))
-                # Cannot find a wallet, create a new one
-                crcat_wallet = await CRCATWallet.get_or_create_wallet_for_cat(
-                    self,
-                    self.main_wallet,
-                    crcat.tail_hash.hex(),
-                    authorized_providers=crcat.authorized_providers,
-                    proofs_checker=ProofsChecker.from_program(uncurry_puzzle(crcat.proofs_checker)),
-                )
-                return WalletIdentifier.create(crcat_wallet)
             if bytes(tail_hash).hex()[2:] in self.default_cats or self.config.get(
                 "automatically_add_unknown_cats", False
             ):
-                cat_wallet = await CATWallet.get_or_create_wallet_for_cat(
-                    self, self.main_wallet, bytes(tail_hash).hex()[2:]
-                )
+                if is_crcat:
+                    cat_wallet: Union[CATWallet, CRCATWallet] = await CRCATWallet.get_or_create_wallet_for_cat(
+                        self,
+                        self.main_wallet,
+                        crcat.tail_hash.hex(),
+                        authorized_providers=crcat.authorized_providers,
+                        proofs_checker=ProofsChecker.from_program(uncurry_puzzle(crcat.proofs_checker)),
+                    )
+                else:
+                    cat_wallet = await CATWallet.get_or_create_wallet_for_cat(
+                        self, self.main_wallet, bytes(tail_hash).hex()[2:]
+                    )
                 return WalletIdentifier.create(cat_wallet)
             else:
                 # Found unacknowledged CAT, save it in the database.
@@ -1703,9 +1703,9 @@ class WalletStateManager:
 
     async def get_wallet_for_asset_id(self, asset_id: str):
         for wallet_id, wallet in self.wallets.items():
-            if wallet.type() == WalletType.CAT:
+            if wallet.type() in (WalletType.CAT, WalletType.CRCAT):
                 assert isinstance(wallet, CATWallet)
-                if bytes(wallet.cat_info.limitations_program_hash).hex() == asset_id:
+                if wallet.get_asset_id() == asset_id:
                     return wallet
             elif wallet.type() == WalletType.DATA_LAYER:
                 assert isinstance(wallet, DataLayerWallet)
@@ -1733,6 +1733,9 @@ class WalletStateManager:
                 self.main_wallet,
                 puzzle_driver,
                 name,
+                potential_subclasses={
+                    AssetType.CR: CRCATWallet,
+                },
             )
 
     async def add_new_wallet(self, wallet: WalletProtocol, create_puzhash: bool = True) -> None:
@@ -1799,7 +1802,7 @@ class WalletStateManager:
     async def convert_puzzle_hash(self, wallet_id: uint32, puzzle_hash: bytes32) -> bytes32:
         wallet = self.wallets[wallet_id]
         # This should be general to wallets but for right now this is just for CATs so we'll add this if
-        if wallet.type() == WalletType.CAT.value:
+        if wallet.type() in (WalletType.CAT.value, WalletType.CRCAT.value):
             assert isinstance(wallet, CATWallet)
             return await wallet.convert_puzzle_hash(puzzle_hash)
 

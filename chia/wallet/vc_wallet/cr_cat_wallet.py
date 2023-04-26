@@ -111,7 +111,9 @@ class CRCATWallet(CATWallet):
         wallet: Wallet,
         puzzle_driver: PuzzleInfo,
         name: Optional[str] = None,
-    ) -> CRCATWallet:
+        # We're hinting this as Any for mypy by should explore adding this to the wallet protocol and hinting properly
+        potential_subclasses: Dict[AssetType, Any] = {},
+    ) -> Any:
         cr_layer: Optional[PuzzleInfo] = puzzle_driver.also()
         if cr_layer is None:
             raise ValueError("create_from_puzzle_info called on CRCATWallet with a non CR-CAT puzzle driver")

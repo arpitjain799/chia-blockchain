@@ -185,6 +185,7 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
         await wallet_node_0.wallet_state_manager.get_all_wallet_info_entries(wallet_type=WalletType.CRCAT)
     )[0].id
     cr_cat_wallet: CRCATWallet = wallet_node_0.wallet_state_manager.wallets[cr_cat_wallet_id]
+    assert await wallet_node_0.wallet_state_manager.get_wallet_for_asset_id(cr_cat_wallet.get_asset_id()) is not None
     # TODO: Do this with the CAT RPC
     txs = await cr_cat_wallet.generate_signed_transaction(
         [uint64(100)],
