@@ -186,16 +186,16 @@ async def test_vc_lifecycle(self_hostname: str, two_wallet_nodes_services: Any, 
     )[0].id
     cr_cat_wallet: CRCATWallet = wallet_node_0.wallet_state_manager.wallets[cr_cat_wallet_id]
     assert await wallet_node_0.wallet_state_manager.get_wallet_for_asset_id(cr_cat_wallet.get_asset_id()) is not None
-    # TODO: Do this with the CAT RPC
-    txs = await cr_cat_wallet.generate_signed_transaction(
-        [uint64(100)],
-        [await wallet_1.get_new_puzzlehash()],
+    tx = await client_0.cat_spend(
+        cr_cat_wallet.id(),
+        uint64(100),
+        encode_puzzle_hash(await wallet_1.get_new_puzzlehash(), "txch"),
         uint64(2000000000),
-        memos=[[b"hey"]],
+        memos=["hey"],
     )
-    for tx in txs:
-        await wallet_node_0.wallet_state_manager.add_pending_transaction(tx)
-    spend_bundle = next(tx.spend_bundle for tx in txs if tx.spend_bundle is not None)
+    await wallet_node_0.wallet_state_manager.add_pending_transaction(tx)
+    assert tx.spend_bundle is not None
+    spend_bundle = tx.spend_bundle
     await time_out_assert_not_none(5, full_node_api.full_node.mempool_manager.get_spendbundle, spend_bundle.name())
     await full_node_api.farm_blocks_to_wallet(count=num_blocks, wallet=wallet_0)
     await full_node_api.wait_for_wallet_synced(wallet_node=wallet_node_0, timeout=20)

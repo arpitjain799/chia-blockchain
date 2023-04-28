@@ -800,7 +800,7 @@ class WalletRpcApi:
         wallet_balance["wallet_type"] = wallet.type()
         if self.service.logged_in_fingerprint is not None:
             wallet_balance["fingerprint"] = self.service.logged_in_fingerprint
-        if wallet.type() == WalletType.CAT:
+        if wallet.type() in {WalletType.CAT, WalletType.CRCAT}:
             assert isinstance(wallet, CATWallet)
             wallet_balance["asset_id"] = wallet.get_asset_id()
         return {"wallet_balance": wallet_balance}
@@ -896,7 +896,7 @@ class WalletRpcApi:
             assert isinstance(wallet, Wallet)
             raw_puzzle_hash = await wallet.get_puzzle_hash(create_new)
             address = encode_puzzle_hash(raw_puzzle_hash, prefix)
-        elif wallet.type() == WalletType.CAT:
+        elif wallet.type() in {WalletType.CAT, WalletType.CRCAT}:
             assert isinstance(wallet, CATWallet)
             raw_puzzle_hash = await wallet.standard_wallet.get_puzzle_hash(create_new)
             address = encode_puzzle_hash(raw_puzzle_hash, prefix)
@@ -974,13 +974,13 @@ class WalletRpcApi:
         wallet = self.service.wallet_state_manager.wallets[wallet_id]
 
         async with self.service.wallet_state_manager.lock:
-            if wallet.type() == WalletType.CAT:
+            if wallet.type() in {WalletType.CAT, WalletType.CRCAT}:
                 assert isinstance(wallet, CATWallet)
                 transaction: Dict = (await self.cat_spend(request, hold_lock=False))["transaction"]
             else:
                 transaction = (await self.create_signed_transaction(request, hold_lock=False))["signed_tx"]
             tr = TransactionRecord.from_json_dict_convenience(transaction)
-            if wallet.type() != WalletType.CAT:
+            if wallet.type() in {WalletType.CAT, WalletType.CRCAT}:
                 assert isinstance(wallet, Wallet)
                 await wallet.push_transaction(tr)
 
@@ -1059,7 +1059,7 @@ class WalletRpcApi:
         wallet = state_mgr.wallets[wallet_id]
         async with state_mgr.lock:
             all_coin_records = await state_mgr.coin_store.get_unspent_coins_for_wallet(wallet_id)
-            if wallet.type() == WalletType.CAT:
+            if wallet.type() in {WalletType.CAT, WalletType.CRCAT}:
                 assert isinstance(wallet, CATWallet)
                 spendable_coins: List[WalletCoinRecord] = await wallet.get_cat_spendable_coins(all_coin_records)
             else:

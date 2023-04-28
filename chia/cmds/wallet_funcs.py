@@ -66,7 +66,7 @@ def get_mojo_per_unit(wallet_type: WalletType) -> int:
     mojo_per_unit: int
     if wallet_type in {WalletType.STANDARD_WALLET, WalletType.POOLING_WALLET, WalletType.DATA_LAYER, WalletType.VC}:
         mojo_per_unit = units["chia"]
-    elif wallet_type == WalletType.CAT:
+    elif wallet_type in {WalletType.CAT, WalletType.CRCAT}:
         mojo_per_unit = units["cat"]
     else:
         raise LookupError(f"Operation is not supported for Wallet type {wallet_type.name}")
@@ -93,7 +93,7 @@ async def get_unit_name_for_wallet_id(
 ):
     if wallet_type in {WalletType.STANDARD_WALLET, WalletType.POOLING_WALLET, WalletType.DATA_LAYER, WalletType.VC}:
         name = config["network_overrides"]["config"][config["selected_network"]]["address_prefix"].upper()
-    elif wallet_type == WalletType.CAT:
+    elif wallet_type in {WalletType.CAT, WalletType.CRCAT}:
         name = await wallet_client.get_cat_name(wallet_id=wallet_id)
     else:
         raise LookupError(f"Operation is not supported for Wallet type {wallet_type.name}")
@@ -240,7 +240,7 @@ async def send(args: dict, wallet_client: WalletRpcClient, fingerprint: int) -> 
             exclude_coin_ids=exclude_coin_ids,
             reuse_puzhash=reuse_puzhash,
         )
-    elif typ == WalletType.CAT:
+    elif typ in {WalletType.CAT, WalletType.CRCAT}:
         print("Submitting transaction...")
         res = await wallet_client.cat_spend(
             wallet_id,
@@ -713,7 +713,7 @@ async def cancel_offer(args: dict, wallet_client: WalletRpcClient, fingerprint: 
 
 
 def wallet_coin_unit(typ: WalletType, address_prefix: str) -> Tuple[str, int]:
-    if typ == WalletType.CAT:
+    if typ in {WalletType.CAT, WalletType.CRCAT}:
         return "", units["cat"]
     if typ in [WalletType.STANDARD_WALLET, WalletType.POOLING_WALLET, WalletType.MULTI_SIG]:
         return address_prefix, units["chia"]
